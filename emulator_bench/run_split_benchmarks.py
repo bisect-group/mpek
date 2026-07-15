@@ -123,7 +123,7 @@ def train_command(job, seed, run_dir, args, device):
         str(args.prefetch_factor),
         "--clip_grad",
         str(args.clip_grad),
-    ] + (["--pin_memory"] if args.pin_memory else []) + (["--persistent_workers"] if args.persistent_workers else []) + (["--preload"] if args.preload else []) + (["--overwrite"] if args.overwrite else []) + (["--disable_tqdm"] if args.disable_tqdm else [])
+    ] + (["--pin_memory"] if args.pin_memory else []) + (["--persistent_workers"] if args.persistent_workers else []) + (["--preload"] if args.preload else []) + (["--overwrite"] if args.overwrite else []) + (["--no_progress"] if args.no_progress else [])
 
 
 def main():
@@ -166,7 +166,7 @@ def main():
     parser.add_argument("--pin_memory", action="store_true")
     parser.add_argument("--preload", action="store_true")
     parser.add_argument("--clip_grad", type=float, default=1.0)
-    parser.add_argument("--disable_tqdm", action="store_true")
+    parser.add_argument("--no_progress", action="store_true")
     args = parser.parse_args()
 
     args.thresholds = normalize_threshold_args(args.thresholds, args.threshold)

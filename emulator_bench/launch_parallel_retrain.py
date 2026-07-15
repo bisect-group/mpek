@@ -114,7 +114,7 @@ def main():
     parser.add_argument("--pin_memory", action="store_true")
     parser.add_argument("--preload", action="store_true")
     parser.add_argument("--clip_grad", type=float, default=1.0)
-    parser.add_argument("--disable_tqdm", action="store_true")
+    parser.add_argument("--no_progress", action="store_true")
     args = parser.parse_args()
 
     if args.runs_per_gpu is None:
