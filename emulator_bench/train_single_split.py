@@ -7,7 +7,13 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
-from tqdm.auto import tqdm
+try:
+    from src.utils.rich_progress import progress, write
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from src.utils.rich_progress import progress, write
 
 import sys
 
@@ -45,12 +51,12 @@ def run_epoch(
     target_mean: float,
     target_std: float,
     desc: str = "",
-    disable_tqdm: bool = False,
+    no_progress: bool = False,
 ):
     model.train(train)
     losses, true_values, pred_values = [], [], []
     criterion = torch.nn.MSELoss()
-    iterator = tqdm(loader, desc=desc, unit="batch", leave=False, dynamic_ncols=True, disable=disable_tqdm)
+    iterator = progress(loader, desc=desc, unit="batch", leave=False, dynamic_ncols=True, disable=no_progress)
     for step, batch in enumerate(iterator, start=1):
         protein = batch["protein"].to(device, non_blocking=True)
         ligand = batch["ligand"].to(device, non_blocking=True)
@@ -161,7 +167,7 @@ def main():
     parser.add_argument("--clip_grad", type=float, default=1.0)
     parser.add_argument("--limit_rows", type=int, default=0)
     parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument("--disable_tqdm", action="store_true")
+    parser.add_argument("--no_progress", action="store_true")
     args = parser.parse_args()
 
     configure_torch_fast_math()
@@ -237,12 +243,12 @@ def main():
 
     history = []
     started = time.time()
-    epoch_iterator = tqdm(
+    epoch_iterator = progress(
         range(start_epoch + 1, args.epochs + 1),
         desc=f"{run_label} epochs",
         unit="epoch",
         dynamic_ncols=True,
-        disable=args.disable_tqdm,
+        disable=args.no_progress,
     )
     for epoch in epoch_iterator:
         train_metrics, _train_true, _train_pred = run_epoch(
@@ -256,7 +262,7 @@ def main():
             train_ds.target_mean,
             train_ds.target_std,
             desc=f"{run_label} train {epoch}/{args.epochs}",
-            disable_tqdm=args.disable_tqdm,
+            no_progress=args.no_progress,
         )
         val_metrics, _val_true, _val_pred = run_epoch(
             model,
@@ -269,7 +275,7 @@ def main():
             train_ds.target_mean,
             train_ds.target_std,
             desc=f"{run_label} val {epoch}/{args.epochs}",
-            disable_tqdm=args.disable_tqdm,
+            no_progress=args.no_progress,
         )
         scheduler.step()
         row = {"epoch": epoch, "lr": optimizer.param_groups[0]["lr"]}
@@ -281,7 +287,7 @@ def main():
         if val_metrics["rmse"] < best_rmse:
             best_rmse = val_metrics["rmse"]
             save_checkpoint(best_path, model, optimizer, scheduler, epoch, best_rmse, args, train_ds.target_mean, train_ds.target_std)
-        if not args.disable_tqdm:
+        if not args.no_progress:
             epoch_iterator.set_postfix(train_rmse=f"{train_metrics['rmse']:.5f}", val_rmse=f"{val_metrics['rmse']:.5f}", best=f"{best_rmse:.5f}")
         print(f"epoch={epoch} train_rmse={train_metrics['rmse']:.6f} val_rmse={val_metrics['rmse']:.6f} best={best_rmse:.6f}", flush=True)
 
@@ -301,7 +307,7 @@ def main():
             train_ds.target_mean,
             train_ds.target_std,
             desc=f"{run_label} final {split_name}",
-            disable_tqdm=args.disable_tqdm,
+            no_progress=args.no_progress,
         )
         metrics.update(
             {

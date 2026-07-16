@@ -8,7 +8,13 @@ from rdkit import Chem
 from rdkit.Chem.rdchem import BondType as BT
 from torch_geometric.data import Batch, Data
 from torch_geometric.nn import global_mean_pool
-from tqdm.auto import tqdm
+try:
+    from src.utils.rich_progress import progress, write
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from src.utils.rich_progress import progress, write
 
 import sys
 
@@ -94,7 +100,7 @@ def embed_proteins(args, sequences):
     tokenizer, model = load_prott5(args.prottrans_path, device)
     written = 0
 
-    for start in tqdm(range(0, len(pending), args.protein_batch_size), desc="Caching ProtT5", unit="batch"):
+    for start in progress(range(0, len(pending), args.protein_batch_size), desc="Caching ProtT5", unit="batch"):
         batch = pending[start : start + args.protein_batch_size]
         spaced = [" ".join(seq) for seq in batch]
         tokens = tokenizer(
@@ -200,7 +206,7 @@ def embed_ligands(args, smiles_values):
     written, failed = 0, 0
     failures = []
 
-    for start in tqdm(range(0, len(pending), args.ligand_batch_size), desc="Caching Mole-BERT", unit="batch"):
+    for start in progress(range(0, len(pending), args.ligand_batch_size), desc="Caching Mole-BERT", unit="batch"):
         batch_smiles = pending[start : start + args.ligand_batch_size]
         graphs, valid_smiles = [], []
         for smiles in batch_smiles:

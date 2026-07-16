@@ -107,7 +107,7 @@ def main():
     parser.add_argument("--pin_memory", action="store_true")
     parser.add_argument("--preload", action="store_true")
     parser.add_argument("--clip_grad", type=float, default=1.0)
-    parser.add_argument("--disable_tqdm", action="store_true")
+    parser.add_argument("--no_progress", action="store_true")
     parser.add_argument("--metric", type=str, default="rmse", choices=["rmse", "mse", "mae", "r2", "pearson", "spearman", "loss"])
     parser.add_argument("--eval_split", type=str, default="val", choices=["val", "test"])
     parser.add_argument("--n_trials", type=int, default=20)
