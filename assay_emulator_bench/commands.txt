@@ -1,0 +1,59 @@
+# Defaults used by every command below:
+#   data:  /home/adhil/github/EMULaToR/data/processed/baselines/MPEK_assayed
+#   cache: /home/adhil/github/EMULaToR/data/processed/baselines/MPEK/embeddings
+#   task:  kcat
+#   axes:  enzyme_sequence_splits and uniprot_time_splits
+#   seeds: 666, 777, and 888
+
+# Validate native MPEK assets.
+conda run --no-capture-output -n mldb \
+  python assay_emulator_bench/prepare_assets.py --auto
+
+# Verify that the shared embedding cache covers the assay-expanded data.
+# Existing cache files are reused.
+CUDA_VISIBLE_DEVICES=0 conda run --no-capture-output -n mldb \
+  python assay_emulator_bench/cache_embeddings.py \
+  --device cuda:0
+
+# Condition-aware MPEK: protein, substrate, pH, and temperature.
+conda run --no-capture-output -n mldb \
+  python assay_emulator_bench/launch_parallel_retrain.py \
+  --gpus 0 1 \
+  --runs_per_gpu 3 \
+  --results_dirname mpek_results_assay_aware \
+  --skip_cache \
+  --use_assay_conditions \
+  --temperature_unit kelvin \
+  --pair_reducer max \
+  --default_settings
+
+# Condition-disabled control on the same assay-expanded rows.
+conda run --no-capture-output -n mldb \
+  python assay_emulator_bench/launch_parallel_retrain.py \
+  --gpus 2 3 \
+  --runs_per_gpu 3 \
+  --results_dirname mpek_results_assay_blind_expanded \
+  --skip_cache \
+  --temperature_unit kelvin \
+  --pair_reducer max \
+  --default_settings
+
+# Sequential condition-aware alternative on physical GPU 0.
+CUDA_VISIBLE_DEVICES=0 conda run --no-capture-output -n mldb \
+  python assay_emulator_bench/run_split_benchmarks.py \
+  --results_dirname mpek_results_assay_aware \
+  --skip_cache \
+  --use_assay_conditions \
+  --temperature_unit kelvin \
+  --pair_reducer max \
+  --device cuda:0
+
+# Aggregate the condition-aware runs.
+conda run --no-capture-output -n mldb \
+  python assay_emulator_bench/aggregate_mpek_results.py \
+  --results_dirname mpek_results_assay_aware
+
+# Aggregate the condition-disabled runs.
+conda run --no-capture-output -n mldb \
+  python assay_emulator_bench/aggregate_mpek_results.py \
+  --results_dirname mpek_results_assay_blind_expanded
