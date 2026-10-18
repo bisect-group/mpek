@@ -44,7 +44,7 @@ Findings on the current files (P-seq threshold_0.01 and Time):
 2. `train_single_split.py` trains one job with the original settings. It uses the last-epoch model. Per epoch it logs train and val metrics.
 3. After training it writes, for train, val and test: `final_results_<p>.csv` (assay-row metrics and `pair_*` metrics), `predictions_<p>.csv` (`pair_id`, `y_true`, `y_pred`). Pair metrics take the maximum true and maximum predicted value per (sequence, smiles) pair, as in the paper table.
 4. `aggregate_mpek_results.py` writes `mpek_assay_summary_runs.csv` and `mpek_assay_summary.csv` (mean and std over seeds per mode and split).
-5. Output: `<output_dir>/<mode>/results/kcat/<split>/seed_<seed>/`. Default `output_dir` is `EMULaToR/outputs/baselines/MPEK_assay`. Nothing is written under `data/`.
+5. Output: `<output_dir>/<mode>/kcat/<split_group>/<split_name>/seed_<seed>/`. Default `output_dir` is `EMULaToR/outputs/baselines/MPEK_assay`. Nothing is written under `data/`.
 6. The wrapper reuses the embedding cache of `emulator_bench` (`outputs/baselines/MPEK/embeddings`). It imports the shared helpers from `emulator_bench`.
 
 ## Files

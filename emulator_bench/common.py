@@ -16,6 +16,10 @@ MOLE_BERT_ROOT = REPO_ROOT / "Mole-BERT"
 EMULATOR_ROOT = REPO_ROOT.parents[1]
 DEFAULT_BASE_DIR = EMULATOR_ROOT / "data" / "processed" / "datasets" / "kinetic_dataset"
 DEFAULT_OUTPUT_DIR = EMULATOR_ROOT / "outputs" / "baselines" / "MPEK"
+DEFAULT_EMBEDDINGS_DIR = DEFAULT_OUTPUT_DIR / "embeddings"
+CACHE_VERSION = 2
+PROTEIN_MODEL_ID = "Rostlab/prot_t5_xl_uniref50"
+PROTEIN_MAX_LENGTH = 1024
 DEFAULT_TASKS = ["kcat", "km"]
 DEFAULT_SEEDS = [666, 777, 888]
 DEFAULT_SPLIT_GROUPS = [
@@ -43,13 +47,13 @@ def normalize_sequence(sequence: str) -> str:
 
 
 def protein_cache_path(embeddings_dir: Path, sequence: str) -> Path:
-    key = stable_hash(normalize_sequence(sequence))
-    return Path(embeddings_dir) / "proteins" / key[:2] / f"{key}.npz"
+    key = stable_hash(f"{PROTEIN_MODEL_ID}\t{PROTEIN_MAX_LENGTH}\t{normalize_sequence(sequence)}")
+    return Path(embeddings_dir) / f"proteins_v{CACHE_VERSION}" / key[:2] / f"{key}.npz"
 
 
 def ligand_cache_path(embeddings_dir: Path, smiles: str) -> Path:
     key = stable_hash(str(smiles).strip())
-    return Path(embeddings_dir) / "ligands" / "molebert" / key[:2] / f"{key}.npz"
+    return Path(embeddings_dir) / f"ligands_v{CACHE_VERSION}" / "molebert" / key[:2] / f"{key}.npz"
 
 
 def ensure_parent(path: Path) -> None:
@@ -72,6 +76,15 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def resolve_amp_dtype(device: torch.device):
+    """bf16 on Ampere or newer, fp16 on older GPUs, fp32 (None) on CPU."""
+    if device.type != "cuda":
+        return None, "fp32"
+    if torch.cuda.get_device_capability(device)[0] >= 8:
+        return torch.bfloat16, "bf16"
+    return torch.float16, "fp16"
+
+
 def require_columns(df: pd.DataFrame, required: Iterable[str], path: Path) -> None:
     missing = [col for col in required if col not in df.columns]
     if missing:
@@ -86,15 +99,14 @@ def discover_split_jobs(base_dir: Path, tasks=None, split_groups=None) -> List[D
             group_dir = Path(base_dir) / task / split_group
             if not group_dir.is_dir():
                 continue
-            split_dirs = [group_dir] + sorted(child for child in group_dir.iterdir() if child.is_dir())
-            for split_dir in split_dirs:
+            split_dirs = [("all", group_dir)] + [(child.name, child) for child in sorted(group_dir.glob("threshold_*")) if child.is_dir()]
+            for split_name, split_dir in split_dirs:
                 if all((split_dir / name).exists() for name in SPLIT_FILES):
                     jobs.append(
                         {
                             "task": task,
                             "split_group": split_group,
-                            "split_name": split_dir.name,
-                            "rel_dir": str(split_dir.relative_to(Path(base_dir) / task)),
+                            "split_name": split_name,
                             "train_path": str(split_dir / "train.parquet"),
                             "val_path": str(split_dir / "val.parquet"),
                             "test_path": str(split_dir / "test.parquet"),
@@ -104,7 +116,7 @@ def discover_split_jobs(base_dir: Path, tasks=None, split_groups=None) -> List[D
 
 
 def run_dir_for(output_dir: Path, job: Dict[str, str], seed: int) -> Path:
-    return Path(output_dir) / "results" / job["task"] / job["rel_dir"] / f"seed_{seed}"
+    return Path(output_dir) / job["task"] / job["split_group"] / job["split_name"] / f"seed_{seed}"
 
 
 def regression_metrics(y_true, y_pred) -> Dict[str, float]:

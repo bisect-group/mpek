@@ -7,11 +7,13 @@ if str(REPO_ROOT) not in sys.path:
 
 from emulator_bench.common import (  # noqa: E402,F401
     DEFAULT_BASE_DIR,
+    DEFAULT_EMBEDDINGS_DIR,
     DEFAULT_SEEDS,
     EMULATOR_ROOT,
     MPEK_ROOT,
     discover_split_jobs,
     regression_metrics,
+    resolve_amp_dtype,
     run_dir_for,
     save_json,
     set_seed,
@@ -21,7 +23,6 @@ from emulator_bench.common import (  # noqa: E402,F401
 TASK = "kcat"
 DEFAULT_SPLIT_GROUPS = ["enzyme_sequence_splits", "uniprot_time_splits"]
 DEFAULT_OUTPUT_DIR = EMULATOR_ROOT / "outputs" / "baselines" / "MPEK_assay"
-DEFAULT_EMBEDDINGS_DIR = EMULATOR_ROOT / "outputs" / "baselines" / "MPEK" / "embeddings"
 MODES = ("with_conditions", "without_conditions")
 DEFAULT_PH = 7.0
 DEFAULT_TEMPERATURE_K = 298.15

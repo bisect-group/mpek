@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 
-from assay_emulator_bench.common import MODES, PAIR_KEYS, regression_metrics, save_json, set_seed
+from assay_emulator_bench.common import MODES, regression_metrics, resolve_amp_dtype, save_json, set_seed
 from assay_emulator_bench.dataset import AssayDataset
 from assay_emulator_bench.modeling import CachedMPEKRegressor
 from MTLKcatKM.utils import ChildTuningAdamW
@@ -32,18 +32,25 @@ def predict(model, dataset, device):
     return torch.cat(preds).squeeze(1) * dataset.target_std + dataset.target_mean
 
 
-def train_epoch(model, optimizer, inputs, target, batch_size):
+def train_epoch(model, optimizer, inputs, target, batch_size, amp_dtype=None, scaler=None):
     """One shuffled pass over device-resident tensors; returns the dropout-mode predictions."""
     model.train()
     order = torch.randperm(len(target), device=target.device)
     train_pred = torch.zeros_like(target)
     for start in range(0, len(target) - batch_size + 1, batch_size):
         idx = order[start : start + batch_size]
-        pred = model(*(t[idx] for t in inputs))
+        with torch.autocast(device_type=target.device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
+            pred = model(*(t[idx] for t in inputs))
+        pred = pred.float()
         loss = F.mse_loss(pred, target[idx])
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
+        if scaler is None:
+            loss.backward()
+            optimizer.step()
+        else:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
         train_pred[idx] = pred.detach()
     return train_pred
 
@@ -84,6 +91,7 @@ def main():
     parser.add_argument("--limit_rows", type=int, default=0, help="Smoke-test option: use only the first rows of each split file.")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no_progress", action="store_true")
+    parser.add_argument("--amp", action="store_true", help="Opt in to mixed precision (bf16 on Ampere or newer, else fp16). The original trains in fp32.")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -100,6 +108,8 @@ def main():
     test_ds = AssayDataset(args.test_path, args.embeddings_dir, **scaling)
 
     device = torch.device(args.device)
+    amp_dtype = resolve_amp_dtype(device)[0] if args.amp else None
+    scaler = torch.amp.GradScaler("cuda") if amp_dtype == torch.float16 else None
     model = CachedMPEKRegressor(
         use_conditions=args.mode == "with_conditions",
         device=device,
@@ -116,7 +126,7 @@ def main():
     inputs = features(train_ds, slice(None), device)
     target = train_ds.target.to(device)
 
-    latest_path = out_dir / "checkpoint_latest.pt"
+    latest_path = out_dir / "checkpoint_last.pt"
     history_path = out_dir / "epoch_metrics.csv"
     start_epoch, history = 0, []
     if latest_path.exists() and not args.overwrite:
@@ -131,7 +141,7 @@ def main():
     started = time.time()
     epochs = progress(range(start_epoch + 1, args.epochs + 1), desc=f"{run_label} epochs", unit="epoch", dynamic_ncols=True, disable=args.no_progress)
     for epoch in epochs:
-        train_pred = train_epoch(model, optimizer, inputs, target, args.batch_size)
+        train_pred = train_epoch(model, optimizer, inputs, target, args.batch_size, amp_dtype, scaler)
         train_metrics = regression_metrics(train_ds.raw_target, train_pred.cpu().squeeze(1) * train_ds.target_std + train_ds.target_mean)
         val_metrics = regression_metrics(val_ds.raw_target, predict(model, val_ds, device))
         history.append({"epoch": epoch, **{f"train_{k}": v for k, v in train_metrics.items()}, **{f"val_{k}": v for k, v in val_metrics.items()}})

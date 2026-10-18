@@ -15,9 +15,9 @@ def main():
     args = parser.parse_args()
     output_dir = Path(args.output_dir)
 
-    files = sorted((output_dir / "results").glob("*/**/seed_*/final_results_test.csv"))
+    files = sorted(output_dir.glob("*/*/*/seed_*/final_results_test.csv"))
     if not files:
-        raise FileNotFoundError(f"No final_results_test.csv under {output_dir / 'results'}")
+        raise FileNotFoundError(f"No final_results_test.csv under {output_dir}")
     runs = pd.concat([pd.read_csv(path).assign(run_dir=str(path.parent)) for path in files], ignore_index=True)
     runs.to_csv(output_dir / "mpek_summary_runs.csv", index=False)
     metrics = ["mse", "rmse", "mae", "r2", "pearson", "spearman"]

@@ -1,5 +1,5 @@
 # Run from the MPEK repository root (baselines/mpek) after "conda activate mldb".
-PY=python
+PY=/home/adhil/.conda/envs/mldb/bin/python
 
 # Once: check the assets and cache the embeddings (shared with emulator_bench)
 $PY emulator_bench/prepare_assets.py
@@ -7,6 +7,9 @@ $PY emulator_bench/cache_embeddings.py --device cuda:0 --tasks kcat
 
 # Both modes, P-seq and Time splits, seeds 666 777 888, GPU 1 with 4 runs at once
 $PY assay_emulator_bench/run_split_benchmarks.py --gpus 1 --runs_per_gpu 4
+
+# Two GPUs, two runs per GPU, mixed precision (bf16 on Ampere or newer)
+$PY assay_emulator_bench/run_split_benchmarks.py --gpus 0 1 --runs_per_gpu 2 --amp
 
 # One mode, or more split groups
 $PY assay_emulator_bench/run_split_benchmarks.py --gpus 1 --modes with_conditions

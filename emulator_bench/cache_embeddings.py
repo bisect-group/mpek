@@ -14,11 +14,14 @@ from torch_geometric.data import Batch, Data
 from torch_geometric.nn import global_mean_pool
 
 from emulator_bench.common import (
+    CACHE_VERSION,
     DEFAULT_BASE_DIR,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_SPLIT_GROUPS,
     DEFAULT_TASKS,
     MOLE_BERT_ROOT,
+    PROTEIN_MAX_LENGTH,
+    PROTEIN_MODEL_ID,
     discover_split_jobs,
     ensure_parent,
     ligand_cache_path,
@@ -96,7 +99,7 @@ def embed_proteins(args, sequences):
             add_special_tokens=True,
             padding=True,
             truncation=True,
-            max_length=args.max_length,
+            max_length=PROTEIN_MAX_LENGTH,
             return_tensors="pt",
         )
         tokens = {key: value.to(device) for key, value in tokens.items()}
@@ -238,9 +241,8 @@ def main():
     parser.add_argument("--sequence_col", type=str, default="sequence")
     parser.add_argument("--smiles_col", type=str, default="smiles")
     parser.add_argument("--target_col", type=str, default="log10_value")
-    parser.add_argument("--prottrans_path", type=str, default="Rostlab/prot_t5_xl_uniref50")
+    parser.add_argument("--prottrans_path", type=str, default=PROTEIN_MODEL_ID)
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--max_length", type=int, default=1024)
     parser.add_argument("--protein_batch_size", type=int, default=1)
     parser.add_argument("--ligand_batch_size", type=int, default=256)
     parser.add_argument("--overwrite", action="store_true")
@@ -263,7 +265,8 @@ def main():
     protein_stats = embed_proteins(args, sequences)
     ligand_stats = embed_ligands(args, smiles_values)
     manifest = {
-        "cache_version": 1,
+        "cache_version": CACHE_VERSION,
+        "protein_max_length": PROTEIN_MAX_LENGTH,
         "base_dir": str(args.base_dir),
         "embeddings_dir": str(args.embeddings_dir),
         "tasks": list(args.tasks),

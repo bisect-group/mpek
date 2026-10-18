@@ -13,10 +13,12 @@ Columns used: `sequence`, `smiles`, `log10_value`. The wrapper does not use pH, 
 The wrapper never writes under `data/`. It writes to `--output_dir` (default `<EMULaToR>/outputs/baselines/MPEK`):
 
 ```text
-embeddings/                                      cached ProtT5 and Mole-BERT vectors
-results/<task>/<split>/seed_<seed>/              metrics, predictions, checkpoint_latest.pt
+embeddings/proteins_v2/, embeddings/ligands_v2/  cached ProtT5 and Mole-BERT vectors (v2 = cache version)
+<task>/<split_group>/<split_name>/seed_<seed>/   metrics, predictions, checkpoint_last.pt
 mpek_summary_runs.csv, mpek_summary.csv          written by aggregate_mpek_results.py
 ```
+
+`<split_name>` is `threshold_<t>`, or `all` for a split group without threshold folders. The protein cache key holds the ProtT5 model id and the length cap (1024). A new `CACHE_VERSION` in `common.py` builds new cache folders.
 
 ## Method and settings
 
@@ -42,8 +44,12 @@ git submodule update --init Mole-BERT
 
 Run all commands from the MPEK repository root in the `mldb` conda environment. `commands.txt` has the commands.
 
+## GPUs and precision
+
+`launch_parallel_retrain.py --gpus 0 1 --runs_per_gpu 2` runs four trainings at once. Each run gets one GPU through `CUDA_VISIBLE_DEVICES`. `run_split_benchmarks.py` runs one training at a time on `--device`. Both take `--amp`: mixed precision (bf16 on Ampere or newer, fp16 with GradScaler on older GPUs). The default is the original fp32.
+
 ## Resuming
 
 - Cache files that exist are skipped. Cache writes are atomic.
-- Training writes `checkpoint_latest.pt` every epoch. A restarted run resumes from it.
+- Training writes `checkpoint_last.pt` every epoch. A restarted run resumes from it.
 - A run with `final_results_test.csv` is skipped unless `--overwrite` is set.

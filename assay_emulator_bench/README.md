@@ -28,16 +28,20 @@ Evaluation: the wrapper takes the maximum true and the maximum predicted log10 v
 
 ## Setup
 
-Run `emulator_bench/prepare_assets.py` and `emulator_bench/cache_embeddings.py` first. The wrapper reads the same embedding cache (default `<EMULaToR>/outputs/baselines/MPEK/embeddings`). The kcat sequences and SMILES are the same files, so the cache covers them. Run all commands from the MPEK repository root in the `mldb` conda environment. `commands.txt` has the commands.
+Run `emulator_bench/prepare_assets.py` and `emulator_bench/cache_embeddings.py` first. The wrapper reads the same versioned embedding cache (default `<EMULaToR>/outputs/baselines/MPEK/embeddings`, with `proteins_v<N>` and `ligands_v<N>` inside). The kcat sequences and SMILES are the same files, so the cache covers them. Run all commands from the MPEK repository root in the `mldb` conda environment. `commands.txt` has the commands.
 
 Output (default `--output_dir` is `<EMULaToR>/outputs/baselines/MPEK_assay`):
 
 ```text
-<mode>/results/kcat/<split>/seed_<seed>/   metrics, predictions, checkpoint_latest.pt
+<mode>/kcat/<split_group>/<split_name>/seed_<seed>/   metrics, predictions, checkpoint_last.pt
 mpek_assay_summary_runs.csv, mpek_assay_summary.csv
 ```
 
+## GPUs and precision
+
+`--gpus 0 1 --runs_per_gpu 2` runs four trainings at once. Each run gets one GPU through `CUDA_VISIBLE_DEVICES`. `--amp` turns on mixed precision (bf16 on Ampere or newer, fp16 with GradScaler on older GPUs). The default is the original fp32.
+
 ## Resuming
 
-- Training writes `checkpoint_latest.pt` every epoch. A restarted run resumes from it.
+- Training writes `checkpoint_last.pt` every epoch. A restarted run resumes from it.
 - A run with `final_results_test.csv` is skipped unless `--overwrite` is set.

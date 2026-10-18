@@ -41,7 +41,7 @@ def train_command(job, seed, mode, args):
     ]  # fmt: skip
     if args.epochs is not None:
         cmd += ["--epochs", str(args.epochs)]
-    return cmd + (["--overwrite"] if args.overwrite else []) + (["--no_progress"] if args.no_progress else [])
+    return cmd + (["--overwrite"] if args.overwrite else []) + (["--no_progress"] if args.no_progress else []) + (["--amp"] if args.amp else [])
 
 
 def main():
@@ -56,6 +56,7 @@ def main():
     parser.add_argument("--runs_per_gpu", type=int, default=1, help="Concurrent runs per GPU.")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no_progress", action="store_true")
+    parser.add_argument("--amp", action="store_true", help="Opt in to mixed precision (bf16 on Ampere or newer, else fp16). The original trains in fp32.")
     parser.add_argument("--epochs", type=int, default=None, help="Smoke-test option. The default is the original 100 epochs.")
     parser.add_argument("--limit_rows", type=int, default=0, help="Smoke-test option: use only the first rows of each split file.")
     args = parser.parse_args()
