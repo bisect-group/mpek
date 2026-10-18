@@ -6,7 +6,7 @@ import torch
 
 from assay_emulator_bench.common import DEFAULT_PH, DEFAULT_TEMPERATURE_K, PAIR_KEYS
 from emulator_bench.common import ligand_cache_path, normalize_sequence, protein_cache_path, require_columns
-from emulator_bench.dataset import load_cached_embeddings
+from emulator_bench.dataset import drop_unembedded_ligands, load_cached_embeddings
 
 TARGET_COL = "log10_value"
 
@@ -26,7 +26,7 @@ class AssayDataset:
         require_columns(frame, [*PAIR_KEYS, TARGET_COL, "pH", "Temperature"], Path(table_path))
         if limit_rows:
             frame = frame.head(limit_rows)
-        frame = frame.dropna(subset=[*PAIR_KEYS, TARGET_COL]).reset_index(drop=True)
+        frame, self.rows_dropped = drop_unembedded_ligands(frame.dropna(subset=[*PAIR_KEYS, TARGET_COL]), "smiles", embeddings_dir)
         self.pair_id = torch.from_numpy(frame.groupby(PAIR_KEYS, sort=False).ngroup().to_numpy())
         self.protein = load_cached_embeddings(frame["sequence"].astype(str).map(normalize_sequence), protein_cache_path, embeddings_dir)
         self.ligand = load_cached_embeddings(frame["smiles"].astype(str).str.strip(), ligand_cache_path, embeddings_dir)

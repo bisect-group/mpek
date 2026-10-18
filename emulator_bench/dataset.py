@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -16,6 +17,20 @@ def load_cached_embeddings(keys: pd.Series, cache_path: Callable[[Path, str], Pa
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"Missing cached embedding. Run cache_embeddings.py first. {exc}") from exc
     return torch.from_numpy(np.stack(rows)[codes])
+
+
+def drop_unembedded_ligands(frame: pd.DataFrame, smiles_col: str, embeddings_dir: str) -> tuple[pd.DataFrame, int]:
+    """Drop rows whose ligand the caching step could not featurize (listed in ligand_cache_failures.json).
+
+    Other missing embeddings stay and raise in load_cached_embeddings.
+    """
+    failures_path = Path(embeddings_dir) / "ligand_cache_failures.json"
+    if not failures_path.exists():
+        return frame, 0
+    failed = {item["smiles"] for item in json.loads(failures_path.read_text())["failures"]}
+    smiles = frame[smiles_col].astype(str).str.strip()
+    drop = smiles.isin(failed) & ~smiles.map({value: ligand_cache_path(embeddings_dir, value).exists() for value in smiles.unique()})
+    return frame[~drop].reset_index(drop=True), int(drop.sum())
 
 
 class CachedMPEKDataset:
@@ -37,6 +52,7 @@ class CachedMPEKDataset:
         if limit_rows:
             frame = frame.head(limit_rows)
         frame = frame[[sequence_col, smiles_col, target_col]].dropna()
+        frame, self.rows_dropped = drop_unembedded_ligands(frame, smiles_col, embeddings_dir)
         self.protein = load_cached_embeddings(frame[sequence_col].astype(str).map(normalize_sequence), protein_cache_path, embeddings_dir)
         self.ligand = load_cached_embeddings(frame[smiles_col].astype(str).str.strip(), ligand_cache_path, embeddings_dir)
         raw = frame[target_col].to_numpy(np.float64)

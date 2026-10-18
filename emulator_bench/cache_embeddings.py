@@ -283,7 +283,7 @@ def main():
     save_json(args.embeddings_dir / "manifest.json", manifest)
     print(f"Saved manifest to {args.embeddings_dir / 'manifest.json'}")
     if ligand_stats["failed"]:
-        raise RuntimeError(f"{ligand_stats['failed']} ligands could not be embedded. See {args.embeddings_dir / 'ligand_cache_failures.json'}. Training on rows with these ligands fails with a missing-embedding error.")
+        print(f"{ligand_stats['failed']} ligands could not be embedded; training drops their rows. See {args.embeddings_dir / 'ligand_cache_failures.json'}.")
 
 
 if __name__ == "__main__":

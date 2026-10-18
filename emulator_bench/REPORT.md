@@ -104,7 +104,7 @@ Unverified deviation. The `Mole-BERT` submodule is initialised at the pinned com
 ## Changes after review
 
 - `launch_parallel_retrain.py` and `run_split_benchmarks.py`: `--cache_device` now defaults to the first `--gpus` entry (launcher) or `--device` (sequential). Before, the cache step always used `cuda:0`.
-- `cache_embeddings.py`: if some ligands fail to embed, the script writes `ligand_cache_failures.json` and then stops with a clear error. Before, the training step failed later with a plain missing-file error.
+- `cache_embeddings.py`: if some ligands fail to embed, the script writes `ligand_cache_failures.json`, prints the count and continues. Training drops only the rows of ligands listed there; any other missing embedding raises.
 - Report text: the false statement about `assay_emulator_bench` is fixed (it was cleaned too). Added the single-task and Mole-BERT sections.
 - Not changed: resume does not restore RNG state, so a resumed run is not bit-identical; pH and temperature off.
 - Note: `--gpus` takes GPU ids. `--gpus 1` means GPU 1, not one GPU.
@@ -141,4 +141,4 @@ Defaults: tasks `kcat km`, seeds `666 777 888`, five split groups. Add `--output
 - The Mole-BERT embedding path is unverified (see "Mole-BERT status").
 - Run time is long (see Smoke test). A full run needs several GPUs or long wall time.
 - The `mpek.pdf` file is untracked in the submodule (known).
-- Finished-run skip ignores `--epochs` and `--limit_rows` (`train_single_split.py:81`). Use a separate output dir for smoke runs. One bad ligand aborts the launcher at the cache step.
+- `train_single_split.py` skips a finished run only when its `run_settings.json` matches `--epochs` and `--limit_rows`; otherwise it reruns. Ligands that cannot be featurized are listed in `ligand_cache_failures.json`. Training drops only their rows and reports the count as `rows_dropped` in `final_results_*.csv`.

@@ -1,4 +1,5 @@
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -95,9 +96,14 @@ def main():
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
+    settings = {"epochs": args.epochs, "limit_rows": args.limit_rows}
+    settings_path = out_dir / "run_settings.json"
     if (out_dir / "final_results_test.csv").exists() and not args.overwrite:
-        print(f"Completed run already exists, skipping: {out_dir}")
-        return
+        if settings_path.exists() and json.loads(settings_path.read_text()) == settings:
+            print(f"Completed run already exists, skipping: {out_dir}")
+            return
+        print(f"Completed run used other settings, rerunning: {out_dir}")
+        args.overwrite = True
     set_seed(args.seed)
     out_dir.mkdir(parents=True, exist_ok=True)
     save_json(out_dir / "run_config.json", vars(args))
@@ -158,12 +164,15 @@ def main():
                 "split_name": args.split_name,
                 "seed": args.seed,
                 "n": len(dataset),
+                "rows_dropped": dataset.rows_dropped,
                 "n_pairs": n_pairs,
                 "elapsed_seconds": time.time() - started,
             }
         )
         rows.to_csv(out_dir / f"predictions_{partition}.csv", index=False)
         pd.DataFrame([metrics]).to_csv(out_dir / f"final_results_{partition}.csv", index=False)
+
+    save_json(settings_path, settings)
 
 
 if __name__ == "__main__":
