@@ -1,59 +1,22 @@
-# Defaults used by every command below:
-#   data:  /home/adhil/github/EMULaToR/data/processed/baselines/MPEK_assayed
-#   cache: /home/adhil/github/EMULaToR/data/processed/baselines/MPEK/embeddings
-#   task:  kcat
-#   axes:  enzyme_sequence_splits and uniprot_time_splits
-#   seeds: 666, 777, and 888
+# Run from the MPEK repository root (baselines/mpek) after "conda activate mldb".
+PY=python
 
-# Validate native MPEK assets.
-conda run --no-capture-output -n mldb \
-  python assay_emulator_bench/prepare_assets.py --auto
+# Once: check the assets and cache the embeddings (shared with emulator_bench)
+$PY emulator_bench/prepare_assets.py
+$PY emulator_bench/cache_embeddings.py --device cuda:0 --tasks kcat
 
-# Verify that the shared embedding cache covers the assay-expanded data.
-# Existing cache files are reused.
-CUDA_VISIBLE_DEVICES=0 conda run --no-capture-output -n mldb \
-  python assay_emulator_bench/cache_embeddings.py \
-  --device cuda:0
+# Both modes, P-seq and Time splits, seeds 666 777 888, GPU 1 with 4 runs at once
+$PY assay_emulator_bench/run_split_benchmarks.py --gpus 1 --runs_per_gpu 4
 
-# Condition-aware MPEK: protein, substrate, pH, and temperature.
-conda run --no-capture-output -n mldb \
-  python assay_emulator_bench/launch_parallel_retrain.py \
-  --gpus 0 1 \
-  --runs_per_gpu 3 \
-  --results_dirname mpek_results_assay_aware \
-  --skip_cache \
-  --use_assay_conditions \
-  --temperature_unit kelvin \
-  --pair_reducer max \
-  --default_settings
+# One mode, or more split groups
+$PY assay_emulator_bench/run_split_benchmarks.py --gpus 1 --modes with_conditions
+$PY assay_emulator_bench/run_split_benchmarks.py --gpus 1 --split_groups random_splits_grouped_sequence random_splits_grouped_smiles substrate_splits
 
-# Condition-disabled control on the same assay-expanded rows.
-conda run --no-capture-output -n mldb \
-  python assay_emulator_bench/launch_parallel_retrain.py \
-  --gpus 2 3 \
-  --runs_per_gpu 3 \
-  --results_dirname mpek_results_assay_blind_expanded \
-  --skip_cache \
-  --temperature_unit kelvin \
-  --pair_reducer max \
-  --default_settings
+# Summary tables over the seeds
+$PY assay_emulator_bench/aggregate_mpek_results.py
 
-# Sequential condition-aware alternative on physical GPU 0.
-CUDA_VISIBLE_DEVICES=0 conda run --no-capture-output -n mldb \
-  python assay_emulator_bench/run_split_benchmarks.py \
-  --results_dirname mpek_results_assay_aware \
-  --skip_cache \
-  --use_assay_conditions \
-  --temperature_unit kelvin \
-  --pair_reducer max \
-  --device cuda:0
+# Tests
+$PY -m pytest assay_emulator_bench/tests
 
-# Aggregate the condition-aware runs.
-conda run --no-capture-output -n mldb \
-  python assay_emulator_bench/aggregate_mpek_results.py \
-  --results_dirname mpek_results_assay_aware
-
-# Aggregate the condition-disabled runs.
-conda run --no-capture-output -n mldb \
-  python assay_emulator_bench/aggregate_mpek_results.py \
-  --results_dirname mpek_results_assay_blind_expanded
+# Smoke test (tiny): 64 rows, 2 epochs, one seed
+$PY assay_emulator_bench/run_split_benchmarks.py --gpus 1 --seeds 666 --epochs 2 --limit_rows 64 --output_dir <scratch_dir>

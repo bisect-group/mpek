@@ -1,61 +1,26 @@
-# Validate assets
-conda run -n mldb python emulator_bench/prepare_assets.py --auto
+# Run from the MPEK repository root (baselines/mpek) after "conda activate mldb".
+PY=python
 
-# Cache all embeddings once on cuda:1
-CUDA_VISIBLE_DEVICES=1 python emulator_bench/cache_embeddings.py \
-  --base_dir /home/adhil/github/EMULaToR/data/processed/baselines/MPEK \
-  --tasks kcat km \
-  --device cuda:0
+# Check the assets (Mole-BERT checkpoint, ProtT5)
+$PY emulator_bench/prepare_assets.py
 
-# Retrain all kcat and km splits with paper-style defaults on GPU 1
-conda run -n mldb python emulator_bench/launch_parallel_retrain.py \
-  --gpus 1 \
-  --runs_per_gpu 1 \
-  --tasks kcat km \
-  --default_settings
+# Cache all embeddings once (fp32 ProtT5, about 6 GB of GPU memory)
+$PY emulator_bench/cache_embeddings.py --device cuda:0
 
-# Seeds default to 666 777 888. Override them like this:
-conda run -n mldb python emulator_bench/launch_parallel_retrain.py \
-  --gpus 1 \
-  --runs_per_gpu 1 \
-  --tasks kcat km \
-  --seeds 111 222 333 \
-  --default_settings
+# All tasks (kcat km), all default splits, seeds 666 777 888, GPU 1 with 4 runs at once
+$PY emulator_bench/launch_parallel_retrain.py --gpus 1 --runs_per_gpu 4
 
-# Retrain across multiple GPUs with multiple concurrent runs per GPU.
-# This example launches 4 concurrent split jobs total: 2 on GPU 0 and 2 on GPU 1.
-conda run -n mldb python emulator_bench/launch_parallel_retrain.py \
-  --gpus 1 \
-  --runs_per_gpu 12 \
-  --tasks kcat km \
-  --default_settings
+# One run at a time instead
+CUDA_VISIBLE_DEVICES=1 $PY emulator_bench/run_split_benchmarks.py --device cuda:0 --cache_device cuda:0
 
-# Disable tqdm bars when writing cleaner multi-run logs
-conda run -n mldb python emulator_bench/launch_parallel_retrain.py \
-  --gpus 0 1 \
-  --runs_per_gpu 2 \
-  --tasks kcat km \
-  --default_settings \
-  --disable_tqdm
+# One task or one split group
+$PY emulator_bench/launch_parallel_retrain.py --gpus 1 --runs_per_gpu 4 --tasks kcat --split_groups uniprot_time_splits
 
-# Sequential alternative
-CUDA_VISIBLE_DEVICES=1 conda run -n mldb python emulator_bench/run_split_benchmarks.py \
-  --tasks kcat km \
-  --device cuda:0 \
-  --cache_device cuda:0
+# Other data or output folders
+$PY emulator_bench/launch_parallel_retrain.py --gpus 0 1 --base_dir <kinetic_dataset> --output_dir <output_dir>
 
-# Optional Optuna
-CUDA_VISIBLE_DEVICES=1 conda run -n mldb python emulator_bench/launch_parallel_optuna.py \
-  --gpus 1 \
-  --tasks kcat km \
-  --n_trials 20
+# Summary tables over the seeds
+$PY emulator_bench/aggregate_mpek_results.py
 
-# Aggregate finished runs
-conda run -n mldb python emulator_bench/aggregate_mpek_results.py --tasks kcat km
-
-# Tiny smoke cache example
-CUDA_VISIBLE_DEVICES=1 conda run -n mldb python emulator_bench/cache_embeddings.py \
-  --tasks kcat km \
-  --split_groups random_splits_grouped_sequence \
-  --limit_rows 2 \
-  --device cuda:0
+# Smoke test (tiny): 64 rows, 2 epochs, one task
+$PY emulator_bench/launch_parallel_retrain.py --gpus 1 --tasks kcat --seeds 666 --epochs 2 --limit_rows 64 --output_dir <scratch_dir>

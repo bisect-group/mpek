@@ -1,46 +1,34 @@
 import argparse
+import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
+import pandas as pd
 import torch
 from rdkit import Chem
 from rdkit.Chem.rdchem import BondType as BT
 from torch_geometric.data import Batch, Data
 from torch_geometric.nn import global_mean_pool
-try:
-    from src.utils.rich_progress import progress, write
-except ModuleNotFoundError:
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-    from src.utils.rich_progress import progress, write
-
-import sys
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 from emulator_bench.common import (
     DEFAULT_BASE_DIR,
-    DEFAULT_EMBEDDINGS_DIR,
+    DEFAULT_OUTPUT_DIR,
     DEFAULT_SPLIT_GROUPS,
     DEFAULT_TASKS,
     MOLE_BERT_ROOT,
-    configure_torch_fast_math,
     discover_split_jobs,
     ensure_parent,
     ligand_cache_path,
     normalize_sequence,
-    normalize_threshold_args,
     protein_cache_path,
-    read_table,
     require_columns,
-    resolve_amp_dtype,
     save_json,
 )
 from emulator_bench.prepare_assets import validate_molebert
+from src.utils.rich_progress import progress
 
 
 ATOM_LIST = list(range(1, 119))
@@ -70,10 +58,11 @@ def collect_unique_values(jobs, sequence_col: str, smiles_col: str, target_col: 
     for job in jobs:
         for split_key in ("train_path", "val_path", "test_path"):
             path = Path(job[split_key])
-            frame = read_table(path)
+            frame = pd.read_parquet(path)
+            require_columns(frame, [sequence_col, smiles_col, target_col], path)
             if limit_rows:
                 frame = frame.head(limit_rows)
-            require_columns(frame, [sequence_col, smiles_col, target_col], path)
+            frame = frame[[sequence_col, smiles_col, target_col]].dropna()
             sequences.update(normalize_sequence(value) for value in frame[sequence_col].astype(str))
             smiles_values.update(str(value).strip() for value in frame[smiles_col].astype(str))
     return sorted(sequences), sorted(smiles_values)
@@ -95,8 +84,7 @@ def embed_proteins(args, sequences):
         return {"total": len(sequences), "written": 0}
 
     device = torch.device(args.device)
-    amp_dtype, precision = resolve_amp_dtype(device)
-    print(f"Loading ProtT5 on {device} with cache forward precision {precision}")
+    print(f"Loading ProtT5 on {device}")
     tokenizer, model = load_prott5(args.prottrans_path, device)
     written = 0
 
@@ -112,14 +100,12 @@ def embed_proteins(args, sequences):
             return_tensors="pt",
         )
         tokens = {key: value.to(device) for key, value in tokens.items()}
-        with torch.no_grad(), torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_dtype is not None):
+        with torch.no_grad():
             hidden = model(**tokens).last_hidden_state
         attention = tokens["attention_mask"]
         for index, sequence in enumerate(batch):
             seq_len = int(attention[index].sum().item())
             pooled = hidden[index, : max(seq_len - 1, 1)].mean(dim=0).detach().float().cpu().numpy()
-            if args.protein_dtype == "float16":
-                pooled = pooled.astype(np.float16)
             save_npz_atomic(
                 protein_cache_path(args.embeddings_dir, sequence),
                 {
@@ -134,7 +120,7 @@ def embed_proteins(args, sequences):
 
 
 def load_molebert(device: torch.device):
-    validate_molebert(auto=True)
+    validate_molebert()
     if str(MOLE_BERT_ROOT) not in sys.path:
         sys.path.insert(0, str(MOLE_BERT_ROOT))
     from model import GNN
@@ -246,11 +232,9 @@ def embed_ligands(args, smiles_values):
 def main():
     parser = argparse.ArgumentParser(description="Cache reusable ProtT5 and Mole-BERT embeddings for MPEK EMULaToR splits.")
     parser.add_argument("--base_dir", type=str, default=str(DEFAULT_BASE_DIR))
-    parser.add_argument("--embeddings_dir", type=str, default=str(DEFAULT_EMBEDDINGS_DIR))
+    parser.add_argument("--output_dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--tasks", nargs="+", default=DEFAULT_TASKS)
     parser.add_argument("--split_groups", nargs="+", default=DEFAULT_SPLIT_GROUPS)
-    parser.add_argument("--threshold", type=str, default=None)
-    parser.add_argument("--thresholds", nargs="+", default=None)
     parser.add_argument("--sequence_col", type=str, default="sequence")
     parser.add_argument("--smiles_col", type=str, default="smiles")
     parser.add_argument("--target_col", type=str, default="log10_value")
@@ -259,19 +243,16 @@ def main():
     parser.add_argument("--max_length", type=int, default=1024)
     parser.add_argument("--protein_batch_size", type=int, default=1)
     parser.add_argument("--ligand_batch_size", type=int, default=256)
-    parser.add_argument("--protein_dtype", choices=["float16", "float32"], default="float16")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--limit_rows", type=int, default=0, help="Debug/smoke mode: read only this many rows per split file.")
     args = parser.parse_args()
 
-    configure_torch_fast_math()
     args.base_dir = Path(args.base_dir)
-    args.embeddings_dir = Path(args.embeddings_dir)
+    args.embeddings_dir = Path(args.output_dir) / "embeddings"
     args.embeddings_dir.mkdir(parents=True, exist_ok=True)
-    args.thresholds = normalize_threshold_args(args.thresholds, args.threshold)
 
     started = time.time()
-    jobs = discover_split_jobs(args.base_dir, tasks=args.tasks, split_groups=args.split_groups, thresholds=args.thresholds)
+    jobs = discover_split_jobs(args.base_dir, tasks=args.tasks, split_groups=args.split_groups)
     if not jobs:
         raise FileNotFoundError(f"No split jobs discovered in {args.base_dir}")
     sequences, smiles_values = collect_unique_values(jobs, args.sequence_col, args.smiles_col, args.target_col, args.limit_rows)
@@ -287,7 +268,6 @@ def main():
         "embeddings_dir": str(args.embeddings_dir),
         "tasks": list(args.tasks),
         "split_groups": list(args.split_groups),
-        "thresholds": args.thresholds,
         "sequence_col": args.sequence_col,
         "smiles_col": args.smiles_col,
         "target_col": args.target_col,
@@ -299,6 +279,8 @@ def main():
     }
     save_json(args.embeddings_dir / "manifest.json", manifest)
     print(f"Saved manifest to {args.embeddings_dir / 'manifest.json'}")
+    if ligand_stats["failed"]:
+        raise RuntimeError(f"{ligand_stats['failed']} ligands could not be embedded. See {args.embeddings_dir / 'ligand_cache_failures.json'}. Training on rows with these ligands fails with a missing-embedding error.")
 
 
 if __name__ == "__main__":

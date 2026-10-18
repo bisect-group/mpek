@@ -1,130 +1,49 @@
 # MPEK emulator_bench
 
-This bench retrains MPEK on EMULaToR split files without depending on MPEK's original shell wrappers.
+This wrapper evaluates MPEK with its original settings on the default EMULaToR splits. It runs the `kcat` and `km` tasks in `data/processed/datasets/kinetic_dataset`. It runs three seeds (666, 777, 888) on every split folder it finds.
 
-Default data root:
+## Data
+
+The default `--base_dir` is `<EMULaToR>/data/processed/datasets/kinetic_dataset`. The wrapper reads `<base_dir>/<task>/<split_group>[/threshold_<t>]/{train,val,test}.parquet`.
+
+Split groups: `random_splits_grouped_sequence`, `random_splits_grouped_smiles`, `uniprot_time_splits`, `enzyme_sequence_splits`, `substrate_splits`. The threshold folders come from the disk.
+
+Columns used: `sequence`, `smiles`, `log10_value`. The wrapper does not use pH, temperature or organism. The unified datasets are not used.
+
+The wrapper never writes under `data/`. It writes to `--output_dir` (default `<EMULaToR>/outputs/baselines/MPEK`):
 
 ```text
-/home/adhil/github/EMULaToR/data/processed/baselines/MPEK
+embeddings/                                      cached ProtT5 and Mole-BERT vectors
+results/<task>/<split>/seed_<seed>/              metrics, predictions, checkpoint_latest.pt
+mpek_summary_runs.csv, mpek_summary.csv          written by aggregate_mpek_results.py
 ```
 
-The bench treats `kcat` and `km` as separate single-task runs because their split trees are separate.
+## Method and settings
 
-## Inputs
+MPEK concatenates a frozen ProtT5 vector (1024-d, projected to 300-d) with a frozen Mole-BERT vector (300-d). A PLE block of expert layers and gates and a tower MLP predict the value. The wrapper caches the frozen vectors in fp32. Each task trains alone because each task has its own splits.
 
-Each split file is expected to contain:
+Settings follow the released training script `MTLKcatKM/pretrain.sh` and `MTLKcatKM/utils.py`:
 
-- `sequence`: enzyme amino-acid sequence
-- `smiles`: substrate SMILES
-- `log10_value`: regression target
+- `ChildTuningAdamW` (mode off), lr 1e-4, weight decay 1e-6, betas (0.9, 0.999), constant lr, no gradient clipping.
+- Batch size 1, 100 epochs, masked MSE on train-normalised targets, fp32.
+- 4 experts, expert layers 1, expert dim 768, expert dropout 0.3, 1 PLE layer.
+- Tower: 2 layers, hidden 128, dropout 0.
+- ProtT5 input length 1024. The wrapper takes the model after the last epoch. The original code has no checkpoint selection.
 
-The current EMULaToR MPEK splits do not contain organism, pH, or temperature, so auxiliary inputs are disabled. No dummy auxiliary values are generated.
+`REPORT.md` lists the differences between the paper and the code.
 
-## Embeddings
+## Setup
 
-Protein embeddings:
-
-- Encoder: ProtT5 from `Rostlab/prot_t5_xl_uniref50`
-- Cache value: original 1024-dimensional mean-pooled embedding
-- Cache path: `embeddings/proteins/<hash-prefix>/<hash>.npz`
-
-Substrate embeddings:
-
-- Encoder: upstream `Mole-BERT` submodule
-- Checkpoint: `Mole-BERT/model_gin/Mole-BERT.pth`
-- Cache value: 300-dimensional mean-pooled graph embedding
-- Cache path: `embeddings/ligands/molebert/<hash-prefix>/<hash>.npz`
-
-`prepare_assets.py --auto` validates the checkpoint and can recover it from the submodule history if it is missing.
-
-## Model
-
-The cached-input model follows the local MPEK implementation:
-
-- ProtT5 1024-d protein vector
-- learned `Linear(1024, 300)` projection
-- Mole-BERT 300-d ligand vector
-- concatenated no-aux input size: `600`
-- original `MTLKcatKM.layers.PLE` and `MLP` blocks
-
-Default training settings follow the paper-style configuration:
-
-- `lr=1e-4`
-- `num_experts=4`
-- `expert_layers=1`
-- `expert_dim=768`
-- `dropout=0.2`
-- `batch_size=1`
-- `epochs=50`
-- `tower_layers=3`
-- `tower_hidden=128`
-
-CUDA runs enable TF32 and automatic mixed precision. AMP uses bf16 on Ampere-or-newer GPUs and fp16 otherwise.
-
-## Commands
-
-Validate assets:
+The Mole-BERT submodule must be present:
 
 ```bash
-conda run -n mldb python emulator_bench/prepare_assets.py --auto
+git submodule update --init Mole-BERT
 ```
 
-Cache all embeddings:
+Run all commands from the MPEK repository root in the `mldb` conda environment. `commands.txt` has the commands.
 
-```bash
-CUDA_VISIBLE_DEVICES=1 conda run -n mldb python emulator_bench/cache_embeddings.py \
-  --base_dir /home/adhil/github/EMULaToR/data/processed/baselines/MPEK \
-  --tasks kcat km --device cuda:0
-```
+## Resuming
 
-Run all splits sequentially:
-
-```bash
-CUDA_VISIBLE_DEVICES=1 conda run -n mldb python emulator_bench/run_split_benchmarks.py \
-  --tasks kcat km --device cuda:0 --cache_device cuda:0
-```
-
-Run all splits through the parallel launcher:
-
-```bash
-conda run -n mldb python emulator_bench/launch_parallel_retrain.py \
-  --gpus 1 --runs_per_gpu 1 --tasks kcat km --default_settings
-```
-
-Run multiple concurrent split jobs per GPU:
-
-```bash
-conda run -n mldb python emulator_bench/launch_parallel_retrain.py \
-  --gpus 0 1 --runs_per_gpu 2 --tasks kcat km --default_settings
-```
-
-The default seeds are `666 777 888`. Override them with `--seeds`, for example:
-
-```bash
-conda run -n mldb python emulator_bench/launch_parallel_retrain.py \
-  --gpus 0 1 --runs_per_gpu 2 --tasks kcat km --seeds 111 222 333
-```
-
-Training shows tqdm bars with live batch loss and epoch RMSE by default. With many concurrent runs, terminal output can interleave; add `--disable_tqdm` for cleaner log files.
-
-Optional Optuna:
-
-```bash
-CUDA_VISIBLE_DEVICES=1 conda run -n mldb python emulator_bench/launch_parallel_optuna.py \
-  --gpus 1 --tasks kcat km --n_trials 20
-```
-
-Aggregate existing results:
-
-```bash
-conda run -n mldb python emulator_bench/aggregate_mpek_results.py --tasks kcat km
-```
-
-## Resumability
-
-- Embedding cache files are skipped when present.
-- Cache writes use temporary files followed by atomic rename.
-- Training writes `checkpoint_latest.pt` every epoch.
-- Restarted runs resume from `checkpoint_latest.pt`.
-- Completed runs with `final_results_test.csv` are skipped unless `--overwrite` is passed.
-- Optuna studies use SQLite and `load_if_exists=True`.
+- Cache files that exist are skipped. Cache writes are atomic.
+- Training writes `checkpoint_latest.pt` every epoch. A restarted run resumes from it.
+- A run with `final_results_test.csv` is skipped unless `--overwrite` is set.

@@ -5,18 +5,20 @@ from MTLKcatKM.layers import MLP, PLE
 
 
 class CachedMPEKRegressor(nn.Module):
+    """MPEK head on cached ProtT5 and Mole-BERT vectors, without pH, temperature or organism inputs."""
+
     def __init__(
         self,
+        expert_dim: int,
+        expert_layers: int,
+        num_experts: int,
+        ple_layers: int,
+        dropout: float,
+        tower_layers: int,
+        tower_hidden: int,
+        tower_dropout: float,
         protein_dim: int = 1024,
         ligand_dim: int = 300,
-        expert_dim: int = 768,
-        expert_layers: int = 1,
-        num_experts: int = 4,
-        ple_layers: int = 1,
-        dropout: float = 0.2,
-        tower_layers: int = 3,
-        tower_hidden: int = 128,
-        tower_dropout: float = 0.0,
     ):
         super().__init__()
         self.protein_projection = nn.Linear(protein_dim, ligand_dim)
@@ -41,5 +43,4 @@ class CachedMPEKRegressor(nn.Module):
     def forward(self, protein, ligand):
         protein = self.protein_projection(protein)
         x = torch.cat([ligand, protein], dim=1)
-        tower_input = self.multi_block(x)[0]
-        return self.tower(tower_input)
+        return self.tower(self.multi_block(x)[0])
