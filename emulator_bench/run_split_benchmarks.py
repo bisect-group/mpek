@@ -27,6 +27,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seeds", nargs="+", type=int, default=DEFAULT_SEEDS)
     parser.add_argument("--cache_device", type=str, default=None, help="Device for the embedding cache step. Default: the first run device.")
     parser.add_argument("--skip_cache", action="store_true")
+    parser.add_argument("--dry_run", action="store_true", help="List the runs and stop.")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no_progress", action="store_true")
     parser.add_argument("--amp", action="store_true", help="Opt in to mixed precision (bf16 on Ampere or newer, else fp16). The original trains in fp32.")
@@ -39,6 +40,16 @@ def discover_jobs(args):
     if not jobs:
         raise FileNotFoundError(f"No split jobs found in {args.base_dir}")
     return jobs
+
+
+def list_runs(jobs, args) -> bool:
+    """With --dry_run, print every run and return True."""
+    if args.dry_run:
+        for job in jobs:
+            for seed in args.seeds:
+                print(run_dir_for(args.output_dir, job, seed))
+        print(f"{len(jobs) * len(args.seeds)} runs")
+    return args.dry_run
 
 
 def maybe_cache(args) -> None:
@@ -84,6 +95,8 @@ def main():
     args.cache_device = args.cache_device or args.device
 
     jobs = discover_jobs(args)
+    if list_runs(jobs, args):
+        return
     maybe_cache(args)
     for job in jobs:
         for seed in args.seeds:

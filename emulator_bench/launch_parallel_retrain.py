@@ -9,18 +9,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from emulator_bench.common import REPO_ROOT, run_dir_for
-from emulator_bench.run_split_benchmarks import add_common_args, discover_jobs, maybe_cache, train_command
+from emulator_bench.run_split_benchmarks import add_common_args, discover_jobs, list_runs, maybe_cache, train_command
 
 
 def main():
     parser = argparse.ArgumentParser(description="Run MPEK with its original settings on every discovered split and seed across GPU worker slots.")
     add_common_args(parser)
     parser.add_argument("--gpus", nargs="+", required=True, help="GPU IDs. Each worker is pinned with CUDA_VISIBLE_DEVICES=<gpu_id>.")
-    parser.add_argument("--runs_per_gpu", type=int, default=1, help="Concurrent runs per GPU.")
+    parser.add_argument("--runs_per_gpu", type=int, default=1, help="Concurrent runs per GPU. 1 is best: CUDA-graph runs already fill one GPU, and 2 to 12 runs together are not faster.")
     args = parser.parse_args()
     args.cache_device = args.cache_device or f"cuda:{args.gpus[0]}"
 
     jobs = discover_jobs(args)
+    if list_runs(jobs, args):
+        return
     maybe_cache(args)
     work = queue.Queue()
     for job in jobs:

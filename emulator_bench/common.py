@@ -1,7 +1,9 @@
 import hashlib
 import json
 import random
+import re
 import sys
+import types
 from pathlib import Path
 from typing import Dict, Iterable, List
 
@@ -17,7 +19,9 @@ EMULATOR_ROOT = REPO_ROOT.parents[1]
 DEFAULT_BASE_DIR = EMULATOR_ROOT / "data" / "processed" / "datasets" / "kinetic_dataset"
 DEFAULT_OUTPUT_DIR = EMULATOR_ROOT / "outputs" / "baselines" / "MPEK"
 DEFAULT_EMBEDDINGS_DIR = DEFAULT_OUTPUT_DIR / "embeddings"
-CACHE_VERSION = 2
+CATAPRO_PROTEIN_CACHE_DIR = EMULATOR_ROOT / "outputs" / "baselines" / "CataPro" / "embeddings" / "prot_t5_v2"
+CATAPRO_MAX_RESIDUES = 1000  # CataPro cuts longer sequences to 500+500 residues, so only shorter ones match MPEK's text
+CACHE_VERSION = 3
 PROTEIN_MODEL_ID = "Rostlab/prot_t5_xl_uniref50"
 PROTEIN_MAX_LENGTH = 1024
 DEFAULT_TASKS = ["kcat", "km"]
@@ -27,7 +31,9 @@ DEFAULT_SPLIT_GROUPS = [
     "random_splits_grouped_smiles",
     "uniprot_time_splits",
     "enzyme_sequence_splits",
+    "enzyme_structure_splits",
     "substrate_splits",
+    "conformer_cosine_splits",
 ]
 SPLIT_FILES = ("train.parquet", "val.parquet", "test.parquet")
 
@@ -37,27 +43,46 @@ for path in (REPO_ROOT, MPEK_ROOT):
 if str(EMULATOR_ROOT) not in sys.path:
     sys.path.append(str(EMULATOR_ROOT))
 
+# The original code imports the Mole-BERT folder as the package `Mole_BERT`.
+if "Mole_BERT" not in sys.modules:
+    sys.modules["Mole_BERT"] = types.ModuleType("Mole_BERT")
+    sys.modules["Mole_BERT"].__path__ = [str(MOLE_BERT_ROOT)]
+
 
 def stable_hash(text: str) -> str:
     return hashlib.sha256(str(text).encode("utf-8")).hexdigest()
 
 
-def normalize_sequence(sequence: str) -> str:
-    return "".join(str(sequence).strip().upper().split()).replace("U", "X").replace("Z", "X").replace("O", "X").replace("B", "X")
+def protein_text(sequence: str) -> str:
+    """Residues separated by spaces, with U, Z, O and B read as X (MTLKDataset.__getitem__)."""
+    return re.sub(r"[UZOB]", "X", " ".join(list(sequence)))
 
 
-def protein_cache_path(embeddings_dir: Path, sequence: str) -> Path:
-    key = stable_hash(f"{PROTEIN_MODEL_ID}\t{PROTEIN_MAX_LENGTH}\t{normalize_sequence(sequence)}")
-    return Path(embeddings_dir) / f"proteins_v{CACHE_VERSION}" / key[:2] / f"{key}.npz"
+def catapro_protein_path(text: str) -> Path:
+    """File of the CataPro ProtT5 cache for this text (feature_utils.py of CataPro)."""
+    key = stable_hash(f"v2|{PROTEIN_MODEL_ID}|max_len=1000|float32|{text}")
+    return CATAPRO_PROTEIN_CACHE_DIR / f"{key}.npy"
+
+
+def protein_cache_path(embeddings_dir: Path, text: str) -> Path:
+    key = stable_hash(f"v{CACHE_VERSION}|{PROTEIN_MODEL_ID}|max_len={PROTEIN_MAX_LENGTH}|float32|{text}")
+    return Path(embeddings_dir) / f"proteins_v{CACHE_VERSION}" / key[:2] / f"{key}.npy"
 
 
 def ligand_cache_path(embeddings_dir: Path, smiles: str) -> Path:
-    key = stable_hash(str(smiles).strip())
-    return Path(embeddings_dir) / f"ligands_v{CACHE_VERSION}" / "molebert" / key[:2] / f"{key}.npz"
+    key = stable_hash(f"v{CACHE_VERSION}|molebert|float32|{smiles}")
+    return Path(embeddings_dir) / f"ligands_v{CACHE_VERSION}" / key[:2] / f"{key}.npy"
 
 
 def ensure_parent(path: Path) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+
+def save_npy_atomic(path: Path, array) -> None:
+    ensure_parent(path)
+    tmp = Path(str(path) + ".tmp.npy")
+    np.save(tmp, np.asarray(array, dtype=np.float32))
+    tmp.replace(path)
 
 
 def save_json(path: Path, payload: Dict) -> None:

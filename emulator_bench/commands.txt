@@ -1,29 +1,43 @@
-# Run from the MPEK repository root (baselines/mpek) after "conda activate mldb".
-PY=/home/adhil/.conda/envs/mldb/bin/python
+# Run from the MPEK repository root (EMULaToR/baselines/mpek) with the mldb environment.
+PY=/home/da24s023/miniforge3/envs/mldb/bin/python
+export CUDA_VISIBLE_DEVICES=0
 
 # Check the assets (Mole-BERT checkpoint, ProtT5)
 $PY emulator_bench/prepare_assets.py
 
-# Cache all embeddings once (fp32 ProtT5, about 6 GB of GPU memory)
+# List the 42 runs (7 split folders x 2 tasks x 3 seeds). No work is done.
+$PY emulator_bench/launch_parallel_retrain.py --gpus 0 --dry_run
+
+# Build the caches once. ProtT5 vectors identical to CataPro's are copied (read only);
+# the other 924 are computed (about 6 min on one GPU). Mole-BERT takes about 1 min.
 $PY emulator_bench/cache_embeddings.py --device cuda:0
 
-# All tasks (kcat km), all default splits, seeds 666 777 888, GPU 1 with 4 runs at once
-$PY emulator_bench/launch_parallel_retrain.py --gpus 1 --runs_per_gpu 4
-
-# Two GPUs, two runs per GPU, mixed precision (bf16 on Ampere or newer)
-$PY emulator_bench/launch_parallel_retrain.py --gpus 0 1 --runs_per_gpu 2 --amp
-
-# One run at a time instead
-CUDA_VISIBLE_DEVICES=1 $PY emulator_bench/run_split_benchmarks.py --device cuda:0 --cache_device cuda:0
+# All 42 runs, one after the other on GPU 0 (--runs_per_gpu 1 is the fastest layout).
+# Estimated time: about 23 h. Run it in a detached screen with a log file.
+$PY emulator_bench/launch_parallel_retrain.py --gpus 0 --skip_cache --no_progress
 
 # One task or one split group
-$PY emulator_bench/launch_parallel_retrain.py --gpus 1 --runs_per_gpu 4 --tasks kcat --split_groups uniprot_time_splits
+$PY emulator_bench/launch_parallel_retrain.py --gpus 0 --skip_cache --tasks kcat --split_groups uniprot_time_splits
 
-# Other data or output folders
-$PY emulator_bench/launch_parallel_retrain.py --gpus 0 1 --base_dir <kinetic_dataset> --output_dir <output_dir>
+# One run
+$PY emulator_bench/train_single_split.py --task kcat --split_group random_splits_grouped_sequence --split_name all \
+  --train_path <EMULaToR>/data/processed/datasets/kinetic_dataset/kcat/random_splits_grouped_sequence/train.parquet \
+  --val_path <...>/val.parquet --test_path <...>/test.parquet \
+  --embeddings_dir <EMULaToR>/outputs/baselines/MPEK/embeddings \
+  --out_dir <EMULaToR>/outputs/baselines/MPEK/kcat/random_splits_grouped_sequence/all/seed_666 --seed 666
+
+# Multi-run path: same settings and files, fused kernels (about 2.7x the steps/s of the commands above, see REPORT.md).
+# Do not run it on run folders that another launcher is writing. One process per task is possible: --tasks kcat / --tasks km.
+$PY emulator_bench/launch_multirun.py --skip_cache --tasks kcat km --group_size 1
+# Several runs of a task in one group (slower on this GPU), e.g. 3 seeds of every split folder together:
+$PY emulator_bench/launch_multirun.py --skip_cache --tasks kcat --group_size 21
 
 # Summary tables over the seeds
 $PY emulator_bench/aggregate_mpek_results.py
 
-# Smoke test (tiny): 64 rows, 2 epochs, one task
-$PY emulator_bench/launch_parallel_retrain.py --gpus 1 --tasks kcat --seeds 666 --epochs 2 --limit_rows 64 --output_dir <scratch_dir>
+# Equivalence tests: CPU only, then also the GPU checks (needs the built caches)
+emulator_bench/verify_equivalence.sh
+emulator_bench/verify_equivalence.sh --gpu
+
+# Smoke test (tiny): 64 rows, 2 epochs, one task, outputs outside the repo
+$PY emulator_bench/launch_parallel_retrain.py --gpus 0 --tasks kcat --split_groups uniprot_time_splits --seeds 666 --epochs 2 --limit_rows 64 --output_dir <scratch_dir>

@@ -11,6 +11,7 @@ import torch
 
 from emulator_bench.common import regression_metrics, resolve_amp_dtype, save_json, set_seed
 from emulator_bench.dataset import CachedMPEKDataset
+from emulator_bench.fast_train import ForeachChildTuningAdamW, GraphedPredictor, GraphedTrainer
 from emulator_bench.modeling import CachedMPEKRegressor
 from MTLKcatKM.utils import ChildTuningAdamW
 from src.utils.rich_progress import progress
@@ -19,6 +20,14 @@ from src.utils.rich_progress import progress
 def draw_loader_seed() -> None:
     """Advance the global RNG by one draw, as each pass of an original torch DataLoader does."""
     torch.empty((), dtype=torch.int64).random_()
+
+
+def epoch_order(n_rows: int) -> torch.Tensor:
+    """Row order of one epoch. The global RNG draws match the original RandomSampler loader: one iterator seed,
+    one sampler seed, then a permutation from a generator seeded with the sampler seed."""
+    draw_loader_seed()
+    generator = torch.Generator().manual_seed(int(torch.empty((), dtype=torch.int64).random_()))
+    return torch.randperm(n_rows, generator=generator)
 
 
 @torch.no_grad()
@@ -32,17 +41,11 @@ def predict(model, dataset, device, batch_size):
     return torch.cat(preds).squeeze(1) * dataset.target_std + dataset.target_mean
 
 
-def train_epoch(model, optimizer, data, batch_size, amp_dtype=None, scaler=None):
-    """One shuffled pass over device-resident tensors; returns the dropout-mode predictions.
-
-    The global RNG draws match the original RandomSampler loader: one iterator seed, one sampler seed,
-    then a permutation from a generator seeded with the sampler seed.
-    """
+def train_epoch(model, optimizer, data, order, batch_size, amp_dtype=None, scaler=None):
+    """One shuffled pass over device-resident tensors with the plain loop; returns the dropout-mode predictions."""
     protein, ligand, target = data
     model.train()
-    draw_loader_seed()
-    generator = torch.Generator().manual_seed(int(torch.empty((), dtype=torch.int64).random_()))
-    order = torch.randperm(len(target), generator=generator).to(target.device)
+    order = order.to(target.device)
     train_pred = torch.zeros_like(target)
     for start in range(0, len(target) - batch_size + 1, batch_size):
         idx = order[start : start + batch_size]
@@ -93,6 +96,7 @@ def main():
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no_progress", action="store_true")
     parser.add_argument("--amp", action="store_true", help="Opt in to mixed precision (bf16 on Ampere or newer, else fp16). The original trains in fp32.")
+    parser.add_argument("--no_graph", action="store_true", help="Use the plain loop instead of CUDA graphs. Results are the same.")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -115,6 +119,7 @@ def main():
     test_ds = CachedMPEKDataset(args.test_path, *common, **scaling)
 
     device = torch.device(args.device)
+    use_graph = device.type == "cuda" and args.batch_size == 1 and not args.amp and not args.no_graph
     amp_dtype = resolve_amp_dtype(device)[0] if args.amp else None
     scaler = torch.amp.GradScaler("cuda") if amp_dtype == torch.float16 else None
     model = CachedMPEKRegressor(
@@ -127,7 +132,7 @@ def main():
         tower_hidden=args.tower_hidden,
         tower_dropout=args.tower_dropout,
     ).to(device)
-    optimizer = ChildTuningAdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=args.weight_decay)
+    optimizer = (ForeachChildTuningAdamW if use_graph else ChildTuningAdamW)(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=args.weight_decay)
     data = (train_ds.protein.to(device), train_ds.ligand.to(device), train_ds.target.to(device))
 
     latest_path = out_dir / "checkpoint_last.pt"
@@ -141,14 +146,25 @@ def main():
         history = pd.read_csv(history_path).to_dict("records")
         print(f"Resuming from epoch {start_epoch}")
 
+    trainer = GraphedTrainer(model, optimizer, *data, lr=args.lr) if use_graph else None
+    predictors = {}
+
+    def predict_split(name, dataset):
+        if not use_graph:
+            return predict(model, dataset, device, args.batch_size)
+        if name not in predictors:
+            predictors[name] = GraphedPredictor(model, dataset.protein.to(device), dataset.ligand.to(device))
+        return predictors[name].predict().cpu().squeeze(1) * dataset.target_std + dataset.target_mean
+
     run_label = f"{args.task}/{args.split_name}/seed{args.seed}"
     started = time.time()
     epochs = progress(range(start_epoch + 1, args.epochs + 1), desc=f"{run_label} epochs", unit="epoch", dynamic_ncols=True, disable=args.no_progress)
     for epoch in epochs:
-        train_pred = train_epoch(model, optimizer, data, args.batch_size, amp_dtype, scaler)
+        order = epoch_order(len(train_ds))
+        train_pred = trainer.run(order.to(device)) if use_graph else train_epoch(model, optimizer, data, order, args.batch_size, amp_dtype, scaler)
         train_metrics = regression_metrics(train_ds.raw_target, (train_pred.cpu().squeeze(1) * train_ds.target_std + train_ds.target_mean))
         draw_loader_seed()
-        val_metrics = regression_metrics(val_ds.raw_target, predict(model, val_ds, device, args.batch_size))
+        val_metrics = regression_metrics(val_ds.raw_target, predict_split("val", val_ds))
         draw_loader_seed()  # the original also evaluates the test loader each epoch
         history.append({"epoch": epoch, **{f"train_{k}": v for k, v in train_metrics.items()}, **{f"val_{k}": v for k, v in val_metrics.items()}})
         pd.DataFrame(history).to_csv(history_path, index=False)
@@ -156,7 +172,7 @@ def main():
         print(f"epoch={epoch} train_rmse={train_metrics['rmse']:.6f} val_rmse={val_metrics['rmse']:.6f}", flush=True)
 
     for split_name, dataset in (("train", train_ds), ("val", val_ds), ("test", test_ds)):
-        y_pred = predict(model, dataset, device, args.batch_size)
+        y_pred = predict_split(split_name, dataset)
         metrics = regression_metrics(dataset.raw_target, y_pred)
         metrics.update(
             {
