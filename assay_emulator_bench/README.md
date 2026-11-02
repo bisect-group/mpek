@@ -28,7 +28,7 @@ Evaluation: the wrapper takes the maximum true and the maximum predicted log10 v
 
 ## Setup
 
-Run `emulator_bench/prepare_assets.py` and `emulator_bench/cache_embeddings.py` first. The wrapper reads the same versioned embedding cache (default `<EMULaToR>/outputs/baselines/MPEK/embeddings`, with `proteins_v<N>` and `ligands_v<N>` inside). The kcat sequences and SMILES are the same files, so the cache covers them. Run all commands from the MPEK repository root in the `mldb` conda environment. `commands.txt` has the commands.
+Run `emulator_bench/prepare_assets.py` and `emulator_bench/cache_embeddings.py` first. The wrapper reads the same versioned embedding cache (default `<EMULaToR>/outputs/baselines/mpek/embeddings`, with `proteins_v<N>` and `ligands_v<N>` inside). The kcat sequences and SMILES are the same files, so the cache covers them. Run all commands from the MPEK repository root in the `mldb` conda environment. `commands.txt` has the commands.
 
 Output (default `--output_dir` is `<EMULaToR>/outputs/baselines/MPEK_assay`):
 

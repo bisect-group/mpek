@@ -10,7 +10,7 @@ Split groups: `random_splits_grouped_sequence`, `random_splits_grouped_smiles`, 
 
 Columns used: `sequence`, `smiles`, `log10_value`. The wrapper does not use pH, temperature or organism. The unified datasets are not used.
 
-The wrapper never writes under `data/`. It writes to `--output_dir` (default `<EMULaToR>/outputs/baselines/MPEK`):
+The wrapper never writes under `data/`. It writes to `--output_dir` (default `<EMULaToR>/outputs/baselines/mpek`):
 
 ```text
 embeddings/proteins_v3/, embeddings/ligands_v3/  cached ProtT5 and Mole-BERT vectors (v3 = cache version)

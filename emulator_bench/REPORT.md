@@ -48,7 +48,7 @@ Paper and code disagree on epochs, dropout and tower depth. I used the code valu
 2. `train_single_split.py` loads the cached vectors into memory, trains one split and one seed with the settings above, and logs train and validation metrics every epoch. It uses the model after the last epoch and writes train, validation and test metrics and predictions. On a CUDA device at batch size 1 it uses `fast_train.py` (see "Speed-ups").
 3. `run_split_benchmarks.py` (sequential) and `launch_parallel_retrain.py` (GPU slots) run every split job for seeds 666, 777, 888. Both take `--dry_run`.
 4. `aggregate_mpek_results.py` writes per-run and mean/std tables.
-5. Results go to `--output_dir` (default `EMULaToR/outputs/baselines/MPEK`), never into `data/`.
+5. Results go to `--output_dir` (default `EMULaToR/outputs/baselines/mpek`), never into `data/`.
 
 Split jobs found on disk for each task: `random_splits_grouped_sequence`, `random_splits_grouped_smiles`, `uniprot_time_splits`, `enzyme_sequence_splits/threshold_*`, `enzyme_structure_splits/threshold_*`, `substrate_splits/threshold_*`, `conformer_cosine_splits/threshold_*`. Thresholds are discovered, not hardcoded. This gives 7 jobs per task and 42 runs with 3 seeds (`launch_parallel_retrain.py --dry_run` lists them).
 
@@ -204,7 +204,7 @@ Defaults: tasks `kcat km`, seeds `666 777 888`, seven split groups. Add `--outpu
 
 ## Caches (built on 2026-10-29)
 
-`outputs/baselines/MPEK/embeddings`: 30,268 ProtT5 vectors (29,344 copied from CataPro, 924 computed in about 3 min on the RTX PRO 4500: 121 sequences of 1001-1023 residues, where CataPro cut 500+500 and MPEK does not, and 803 of more than 1023 residues, which MPEK truncates to 1023 residues plus the end token) and 13,104 Mole-BERT vectors. 0 ligands failed, so 0 rows are dropped in every split.
+`outputs/baselines/mpek/embeddings`: 30,268 ProtT5 vectors (29,344 copied from CataPro, 924 computed in about 3 min on the RTX PRO 4500: 121 sequences of 1001-1023 residues, where CataPro cut 500+500 and MPEK does not, and 803 of more than 1023 residues, which MPEK truncates to 1023 residues plus the end token) and 13,104 Mole-BERT vectors. 0 ligands failed, so 0 rows are dropped in every split.
 
 ## Smoke test
 

@@ -23,8 +23,8 @@ $PY emulator_bench/launch_parallel_retrain.py --gpus 0 --skip_cache --tasks kcat
 $PY emulator_bench/train_single_split.py --task kcat --split_group random_splits_grouped_sequence --split_name all \
   --train_path <EMULaToR>/data/processed/datasets/kinetic_dataset/kcat/random_splits_grouped_sequence/train.parquet \
   --val_path <...>/val.parquet --test_path <...>/test.parquet \
-  --embeddings_dir <EMULaToR>/outputs/baselines/MPEK/embeddings \
-  --out_dir <EMULaToR>/outputs/baselines/MPEK/kcat/random_splits_grouped_sequence/all/seed_666 --seed 666
+  --embeddings_dir <EMULaToR>/outputs/baselines/mpek/embeddings \
+  --out_dir <EMULaToR>/outputs/baselines/mpek/kcat/random_splits_grouped_sequence/all/seed_666 --seed 666
 
 # Multi-run path: same settings and files, fused kernels (about 2.7x the steps/s of the commands above, see REPORT.md).
 # Do not run it on run folders that another launcher is writing. One process per task is possible: --tasks kcat / --tasks km.
