@@ -78,6 +78,15 @@ Same as `emulator_bench`: cached frozen-encoder vectors, in-memory batches with 
 - Tests: `tests/test_assay_bench.py` passed again after the `emulator_bench` change (3 passed, mldb env).
 - Notes kept: resume does not restore RNG state; one `pkill -f` use in the first smoke test (see Open issues) is reported to the owner.
 
+## Fast path
+
+- Same exact speed-up as `emulator_bench` (see its REPORT, "Speed-ups"): CUDA graph of the step, foreach `ChildTuningAdamW`, graph predictions, 15,901 eager steps first. `emulator_bench/fast_train.py` takes an `extra` argument for further per-row inputs (pH, temperature); behaviour without it is unchanged.
+- The assay loop now also uses the original loss form `sum((pred - y)^2) / (n + 1e-5)`, the original loader RNG draws (`epoch_order`) and training-batch-size predictions, so it matches `emulator_bench` bit for bit with conditions off.
+- `dataset.py` now reads the current cache (`protein_text` keys, `.npy` files) and float64 mean and std, as in `emulator_bench`.
+- Tests (`tests/test_fast_path.py`, GPU, skipped without CUDA): fast path equals plain loop in both modes, and the conditions-off fast path equals the `emulator_bench` fast path, over 2 x 16,100 steps (weights, Adam state, train and eval predictions).
+- Speed on one A10 (GPU 1, shared with other jobs), 50,293 train rows, random features of real shape: with conditions epoch 1 (15,901 eager steps) 244 s at 206 steps/s, later epochs 71 s at 706 steps/s. Without conditions 210 s, then 52 s at 974 steps/s. One run of 100 epochs: about 2.0 h with conditions and 1.5 h without. All 12 runs (2 splits x 2 modes x 3 seeds) one at a time: about 21 h. The plain loop was about 5x slower.
+- The real smoke (2 epochs, 2 modes, seed 666, P-seq threshold_0.01) ran through `run_split_benchmarks.py` and wrote all files. The kcat split files on disk have no `pH` or `Temperature` columns, so the smoke used a copy with random conditions. It measures speed only, not results. The 12 real runs need split files that carry these columns.
+
 ## Commands (all seeds x splits x modes)
 
 Run in `baselines/mpek` with `conda activate mldb`:

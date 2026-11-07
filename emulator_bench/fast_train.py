@@ -80,9 +80,10 @@ class GraphedTrainer:
     `constant_step_after` steps, so earlier steps run eagerly and later steps replay the graph.
     """
 
-    def __init__(self, model, optimizer, protein, ligand, target, lr: float, beta1: float = 0.9, beta2: float = 0.999):
+    def __init__(self, model, optimizer, protein, ligand, target, lr: float, beta1: float = 0.9, beta2: float = 0.999, extra=()):
         self.model, self.optimizer = model, optimizer
         self.protein, self.ligand, self.target = protein, ligand, target
+        self.extra = tuple(extra)  # further per-row model inputs, passed after the ligand
         self.eager_until = constant_step_after(lr, beta1, beta2)
         self.order = torch.zeros(len(target), dtype=torch.long, device=target.device)
         self.ptr = torch.zeros(1, dtype=torch.long, device=target.device)
@@ -90,7 +91,7 @@ class GraphedTrainer:
         self.graphs = {}
 
     def _update(self, idx):
-        pred = self.model(self.protein.index_select(0, idx), self.ligand.index_select(0, idx)).float()
+        pred = self.model(*(t.index_select(0, idx) for t in (self.protein, self.ligand, *self.extra))).float()
         loss = (pred - self.target.index_select(0, idx)).pow(2).sum() / (len(idx) + 1e-5)  # original compute_loss form
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -147,8 +148,9 @@ class GraphedTrainer:
 class GraphedPredictor:
     """Eval-mode predictions at batch size 1 for fixed features, in CUDA graphs."""
 
-    def __init__(self, model, protein, ligand):
+    def __init__(self, model, protein, ligand, extra=()):
         self.model, self.protein, self.ligand = model, protein, ligand
+        self.extra = tuple(extra)
         self.out = torch.zeros(len(protein), 1, device=protein.device)
         self.ptr = torch.zeros(1, dtype=torch.long, device=protein.device)
         was_training = model.training
@@ -159,7 +161,7 @@ class GraphedPredictor:
 
     @torch.no_grad()
     def _body(self):
-        pred = self.model(self.protein.index_select(0, self.ptr), self.ligand.index_select(0, self.ptr))
+        pred = self.model(*(t.index_select(0, self.ptr) for t in (self.protein, self.ligand, *self.extra)))
         self.out.index_copy_(0, self.ptr, pred)
         self.ptr += 1
 

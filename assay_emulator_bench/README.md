@@ -37,6 +37,10 @@ Output (default `--output_dir` is `<EMULaToR>/outputs/baselines/MPEK_assay`):
 mpek_assay_summary_runs.csv, mpek_assay_summary.csv
 ```
 
+## Speed
+
+On CUDA at batch size 1 in fp32 the wrapper uses `emulator_bench/fast_train.py`: a CUDA graph of the whole training step, a multi-tensor `ChildTuningAdamW`, and batch-1 validation predictions as graphs. The first 15,901 steps run eagerly. The results equal the plain loop bit for bit (`tests/test_fast_path.py`). `--no_graph`, `--amp`, other batch sizes and CPU use the plain loop. Validation and test predictions use the training batch size, as in the original (PLE depends on it).
+
 ## GPUs and precision
 
 `--gpus 0 1 --runs_per_gpu 2` runs four trainings at once. Each run gets one GPU through `CUDA_VISIBLE_DEVICES`. `--amp` turns on mixed precision (bf16 on Ampere or newer, fp16 with GradScaler on older GPUs). The default is the original fp32.
