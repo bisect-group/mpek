@@ -1,0 +1,3 @@
+[submodule "Mole-BERT"]
+	path = Mole-BERT
+	url = https://github.com/junxia97/Mole-BERT.git

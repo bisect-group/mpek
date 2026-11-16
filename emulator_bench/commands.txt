@@ -1,0 +1,13 @@
+# Run from the MPEK submodule root. PY is python from the env you use (we used the mldb conda env).
+# emulator_bench/run.sh runs all of this. The paper runs used the multi-run path with one run at a time.
+PY=python
+export CUDA_VISIBLE_DEVICES=0
+
+$PY emulator_bench/prepare_assets.py          # check Mole-BERT checkpoint and ProtT5
+$PY emulator_bench/cache_embeddings.py --device cuda:0
+$PY emulator_bench/launch_multirun.py --skip_cache --tasks kcat km --group_size 1
+$PY emulator_bench/aggregate_mpek_results.py
+
+# Equivalence tests: CPU only, then also the GPU checks (needs the built caches)
+emulator_bench/verify_equivalence.sh
+emulator_bench/verify_equivalence.sh --gpu

@@ -1,0 +1,10 @@
+# Run from the MPEK submodule root. PY is python from the env you use (we used the mldb conda env).
+# assay_emulator_bench/run.sh runs all of this. Data default: data/processed/datasets/kinetic_dataset_assay_conditions.
+PY=python
+
+$PY emulator_bench/prepare_assets.py
+CUDA_VISIBLE_DEVICES=0 $PY emulator_bench/cache_embeddings.py --device cuda:0 --tasks kcat   # cache shared with emulator_bench
+$PY assay_emulator_bench/run_split_benchmarks.py --gpus 0 --runs_per_gpu 4 --seeds 666 777 888
+$PY assay_emulator_bench/aggregate_mpek_results.py
+
+$PY -m pytest assay_emulator_bench/tests

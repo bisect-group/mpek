@@ -1,0 +1,176 @@
+import hashlib
+import json
+import random
+import re
+import sys
+import types
+from pathlib import Path
+from typing import Dict, Iterable, List
+
+import numpy as np
+import pandas as pd
+import torch
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+MPEK_ROOT = REPO_ROOT / "MTLKcatKM"
+MOLE_BERT_ROOT = REPO_ROOT / "Mole-BERT"
+EMULATOR_ROOT = REPO_ROOT.parents[1]
+DEFAULT_BASE_DIR = EMULATOR_ROOT / "data" / "processed" / "datasets" / "kinetic_dataset"
+DEFAULT_OUTPUT_DIR = EMULATOR_ROOT / "outputs" / "baselines" / "mpek"
+DEFAULT_EMBEDDINGS_DIR = DEFAULT_OUTPUT_DIR / "embeddings"
+CATAPRO_PROTEIN_CACHE_DIR = EMULATOR_ROOT / "outputs" / "baselines" / "CataPro" / "embeddings" / "prot_t5_v2"
+CATAPRO_MAX_RESIDUES = 1000  # CataPro cuts longer sequences to 500+500 residues, so only shorter ones match MPEK's text
+CACHE_VERSION = 3
+PROTEIN_MODEL_ID = "Rostlab/prot_t5_xl_uniref50"
+PROTEIN_MAX_LENGTH = 1024
+DEFAULT_TASKS = ["kcat", "km"]
+DEFAULT_SEEDS = [666, 777, 888]
+DEFAULT_SPLIT_GROUPS = [
+    "random_splits_grouped_sequence",
+    "random_splits_grouped_smiles",
+    "uniprot_time_splits",
+    "enzyme_sequence_splits",
+    "enzyme_structure_splits",
+    "substrate_splits",
+    "conformer_cosine_splits",
+]
+SPLIT_FILES = ("train.parquet", "val.parquet", "test.parquet")
+
+for path in (REPO_ROOT, MPEK_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+if str(EMULATOR_ROOT) not in sys.path:
+    sys.path.append(str(EMULATOR_ROOT))
+
+# The original code imports the Mole-BERT folder as the package `Mole_BERT`.
+if "Mole_BERT" not in sys.modules:
+    sys.modules["Mole_BERT"] = types.ModuleType("Mole_BERT")
+    sys.modules["Mole_BERT"].__path__ = [str(MOLE_BERT_ROOT)]
+
+
+def stable_hash(text: str) -> str:
+    return hashlib.sha256(str(text).encode("utf-8")).hexdigest()
+
+
+def protein_text(sequence: str) -> str:
+    """Residues separated by spaces, with U, Z, O and B read as X (MTLKDataset.__getitem__)."""
+    return re.sub(r"[UZOB]", "X", " ".join(list(sequence)))
+
+
+def catapro_protein_path(text: str) -> Path:
+    """File of the CataPro ProtT5 cache for this text (feature_utils.py of CataPro)."""
+    key = stable_hash(f"v2|{PROTEIN_MODEL_ID}|max_len=1000|float32|{text}")
+    return CATAPRO_PROTEIN_CACHE_DIR / f"{key}.npy"
+
+
+def protein_cache_path(embeddings_dir: Path, text: str) -> Path:
+    key = stable_hash(f"v{CACHE_VERSION}|{PROTEIN_MODEL_ID}|max_len={PROTEIN_MAX_LENGTH}|float32|{text}")
+    return Path(embeddings_dir) / f"proteins_v{CACHE_VERSION}" / key[:2] / f"{key}.npy"
+
+
+def ligand_cache_path(embeddings_dir: Path, smiles: str) -> Path:
+    key = stable_hash(f"v{CACHE_VERSION}|molebert|float32|{smiles}")
+    return Path(embeddings_dir) / f"ligands_v{CACHE_VERSION}" / key[:2] / f"{key}.npy"
+
+
+def ensure_parent(path: Path) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+
+def save_npy_atomic(path: Path, array) -> None:
+    ensure_parent(path)
+    tmp = Path(str(path) + ".tmp.npy")
+    np.save(tmp, np.asarray(array, dtype=np.float32))
+    tmp.replace(path)
+
+
+def save_json(path: Path, payload: Dict) -> None:
+    ensure_parent(path)
+    tmp = Path(str(path) + ".tmp")
+    with open(tmp, "w") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+    tmp.replace(path)
+
+
+def set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def resolve_amp_dtype(device: torch.device):
+    """bf16 on Ampere or newer, fp16 on older GPUs, fp32 (None) on CPU."""
+    if device.type != "cuda":
+        return None, "fp32"
+    if torch.cuda.get_device_capability(device)[0] >= 8:
+        return torch.bfloat16, "bf16"
+    return torch.float16, "fp16"
+
+
+def require_columns(df: pd.DataFrame, required: Iterable[str], path: Path) -> None:
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns {missing} in {path}")
+
+
+def discover_split_jobs(base_dir: Path, tasks=None, split_groups=None) -> List[Dict[str, str]]:
+    """Find `<base_dir>/<task>/<split_group>[/threshold_<t>]/{train,val,test}.parquet`."""
+    jobs: List[Dict[str, str]] = []
+    for task in tasks or DEFAULT_TASKS:
+        for split_group in split_groups or DEFAULT_SPLIT_GROUPS:
+            group_dir = Path(base_dir) / task / split_group
+            if not group_dir.is_dir():
+                continue
+            split_dirs = [("all", group_dir)] + [(child.name, child) for child in sorted(group_dir.glob("threshold_*")) if child.is_dir()]
+            for split_name, split_dir in split_dirs:
+                if all((split_dir / name).exists() for name in SPLIT_FILES):
+                    jobs.append(
+                        {
+                            "task": task,
+                            "split_group": split_group,
+                            "split_name": split_name,
+                            "train_path": str(split_dir / "train.parquet"),
+                            "val_path": str(split_dir / "val.parquet"),
+                            "test_path": str(split_dir / "test.parquet"),
+                        }
+                    )
+    return jobs
+
+
+def run_dir_for(output_dir: Path, job: Dict[str, str], seed: int) -> Path:
+    return Path(output_dir) / job["task"] / job["split_group"] / job["split_name"] / f"seed_{seed}"
+
+
+def regression_metrics(y_true, y_pred) -> Dict[str, float]:
+    y_true = np.asarray(y_true, dtype=np.float64).reshape(-1)
+    y_pred = np.asarray(y_pred, dtype=np.float64).reshape(-1)
+    err = y_pred - y_true
+    mse = float(np.mean(err ** 2))
+    denom = float(np.sum((y_true - y_true.mean()) ** 2))
+    return {
+        "mse": mse,
+        "rmse": mse ** 0.5,
+        "mae": float(np.mean(np.abs(err))),
+        "r2": float(1.0 - np.sum(err ** 2) / denom) if denom > 0 else float("nan"),
+        "pearson": float(np.corrcoef(y_true, y_pred)[0, 1]) if y_true.size > 1 else float("nan"),
+        "spearman": float(pd.Series(y_true).rank().corr(pd.Series(y_pred).rank())) if y_true.size > 1 else float("nan"),
+    }
+
+
+def summarize_rows(rows: List[Dict], group_cols: List[str], metric_cols: Iterable[str]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame()
+    out = []
+    for keys, group in pd.DataFrame(rows).groupby(group_cols, sort=False):
+        row = dict(zip(group_cols, keys if isinstance(keys, tuple) else (keys,)))
+        row["n_runs"] = int(len(group))
+        for metric in metric_cols:
+            values = pd.to_numeric(group[metric], errors="coerce").dropna()
+            if len(values):
+                row[f"{metric}_mean"] = float(values.mean())
+                row[f"{metric}_std"] = float(values.std(ddof=1)) if len(values) > 1 else 0.0
+        out.append(row)
+    return pd.DataFrame(out)
